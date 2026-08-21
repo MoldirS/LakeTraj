@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import shutil
 import threading
+import time
 import zipfile
 
 import geopandas as gpd
@@ -36,6 +37,7 @@ from laketraj.hysplit_runner import (
     validate_hysplit_environment,
     run_trajectory_batch,
     save_batch_results,
+    cleanup_batch_run_directories,
 )
 
 APP_TITLE = "LakeTraj"
@@ -67,6 +69,15 @@ PERSISTENT_RESULTS_ROOT = Path(
         "LAKETRAJ_RESULTS_DIR",
         "/content/drive/MyDrive/LakeTraj_results",
     )
+)
+
+RESULT_RETENTION_HOURS = float(
+    os.environ.get("RESULT_RETENTION_HOURS", "3")
+)
+RESULT_RETENTION_SECONDS = max(0.0, RESULT_RETENTION_HOURS * 3600.0)
+RESULT_CLEANUP_INTERVAL_SECONDS = max(
+    60.0,
+    float(os.environ.get("RESULT_CLEANUP_INTERVAL_SECONDS", "900")),
 )
 
 VERTICAL_MOTION_OPTIONS = {
@@ -386,6 +397,80 @@ def save_results_to_persistent_storage(
         "file_count": len(copied_files),
         "zip_path": str(zip_files[0]) if zip_files else None,
     }
+
+
+def cleanup_expired_result_packages(
+    retention_seconds=RESULT_RETENTION_SECONDS,
+    runtime_results_root=RUNTIME_ROOT / "results",
+    persistent_results_root=PERSISTENT_RESULTS_ROOT,
+):
+    """
+    Delete expired generated result packages only.
+
+    Meteorology caches and the separately installed HYSPLIT tree are never
+    touched. A result directory expires according to its directory mtime.
+    """
+    cutoff = time.time() - float(retention_seconds)
+    deleted_directories = []
+    freed_bytes = 0
+
+    roots = []
+    for value in (runtime_results_root, persistent_results_root):
+        root = Path(value).resolve()
+        if root not in roots:
+            roots.append(root)
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+
+        for path in root.iterdir():
+            if not path.is_dir():
+                continue
+
+            resolved = path.resolve()
+            if resolved.parent != root:
+                continue
+
+            try:
+                if resolved.stat().st_mtime > cutoff:
+                    continue
+
+                size_bytes = sum(
+                    item.stat().st_size
+                    for item in resolved.rglob("*")
+                    if item.is_file()
+                )
+                shutil.rmtree(resolved)
+                freed_bytes += size_bytes
+                deleted_directories.append(str(resolved))
+            except FileNotFoundError:
+                continue
+
+    return {
+        "deleted_directories": deleted_directories,
+        "deleted_count": len(deleted_directories),
+        "freed_bytes": freed_bytes,
+    }
+
+
+def _result_cleanup_worker():
+    """Periodically remove generated result packages older than retention."""
+    while True:
+        try:
+            cleanup_expired_result_packages()
+        except Exception:
+            # Cleanup must never interrupt the running web application.
+            pass
+        time.sleep(RESULT_CLEANUP_INTERVAL_SECONDS)
+
+
+_result_cleanup_thread = threading.Thread(
+    target=_result_cleanup_worker,
+    daemon=True,
+    name="laketraj-result-retention-cleanup",
+)
+_result_cleanup_thread.start()
 
 
 def prune_gdas1_cache(
@@ -1921,8 +2006,10 @@ def Page():
 4. Run the HYSPLIT backward trajectories and keep the page open until completion.
 5. Explore the trajectories on the receptor map and download the required CSV, GeoJSON, GeoPackage or ZIP outputs.
 
-**Note:** Meteorology files remain in persistent runtime storage.
-Completed trajectory outputs are saved automatically to persistent storage.
+**Note:** Meteorology files are retained as a rolling cache for reuse by
+compatible trajectory requests; obsolete meteorology is removed when new
+settings require different files. Generated trajectory results are retained
+for approximately 3 hours before automatic cleanup.
                     """
                 )
 
@@ -2573,6 +2660,11 @@ def HysplitCalculationCard(configuration):
                 saved_results["output_directory"]
             )
 
+            # HYSPLIT working folders are no longer needed once all result
+            # packages have been created successfully. Meteorology is kept as
+            # a rolling cache so another receptor can reuse the same dates.
+            run_cleanup = cleanup_batch_run_directories(batch_result)
+
             _, _, cached_meteorology_status = active_meteorology_status(
                 configuration
             )
@@ -2625,6 +2717,7 @@ def HysplitCalculationCard(configuration):
                 "persistent_results_directory": persistent_results["directory"],
                 "persistent_results_zip": persistent_results["zip_path"],
                 "persistent_result_file_count": persistent_results["file_count"],
+                "cleaned_hysplit_run_directories": run_cleanup["deleted_count"],
                 "cached_meteorology_files": cached_meteorology_files,
                 "cached_meteorology_megabytes": cached_meteorology_megabytes,
             }
@@ -2642,7 +2735,8 @@ def HysplitCalculationCard(configuration):
                 f'{summary["number_of_points"]} trajectory points.'
             )
 
-            # The required files remain cached for later compatible runs.
+            # Meteorology remains as a rolling cache for compatible runs.
+            # Obsolete files are pruned when a later meteorology plan changes.
             # Refresh both cards so their on-disk status stays current.
             gdas1_download_refresh.set(
                 gdas1_download_refresh.value + 1
@@ -2770,8 +2864,8 @@ def HysplitCalculationCard(configuration):
             )
 
         solara.Info(
-            f"Required {meteorology_label} files remain in the local cache "
-            "for reuse after trajectory execution."
+            f"Required {meteorology_label} files remain in the runtime cache "
+            "for reuse by other receptors with the same or overlapping dates."
         )
         solara.Button(
             (
