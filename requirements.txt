@@ -1,0 +1,9 @@
+solara==1.61.0
+requests==2.32.4
+pandas>=2.0,<3
+geopandas>=0.14,<2
+pyogrio>=0.7,<1
+shapely>=2,<3
+ipyleaflet>=0.18,<1
+ipywidgets>=8,<9
+
