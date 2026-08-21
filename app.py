@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import shutil
 import threading
+import time
 import zipfile
 
 import geopandas as gpd
@@ -68,6 +69,17 @@ PERSISTENT_RESULTS_ROOT = Path(
         "/content/drive/MyDrive/LakeTraj_results",
     )
 )
+
+
+# Final trajectory packages remain downloadable for this many hours.
+# Meteorology is deliberately NOT governed by this retention setting.
+RESULT_RETENTION_HOURS = float(
+    os.environ.get("RESULT_RETENTION_HOURS", "3")
+)
+if RESULT_RETENTION_HOURS <= 0:
+    raise ValueError("RESULT_RETENTION_HOURS must be greater than zero.")
+
+RESULT_RETENTION_SECONDS = RESULT_RETENTION_HOURS * 60 * 60
 
 VERTICAL_MOTION_OPTIONS = {
     "Model vertical velocity": 0,
@@ -386,6 +398,98 @@ def save_results_to_persistent_storage(
         "file_count": len(copied_files),
         "zip_path": str(zip_files[0]) if zip_files else None,
     }
+
+
+def _latest_result_mtime(directory):
+    """Return the newest modification time inside one result package."""
+    directory = Path(directory)
+    latest = directory.stat().st_mtime
+
+    for path in directory.rglob("*"):
+        try:
+            latest = max(latest, path.stat().st_mtime)
+        except FileNotFoundError:
+            # Another cleanup pass may already have removed this item.
+            continue
+
+    return latest
+
+
+def _delete_result_package_if_expired(directory, root, retention_seconds):
+    """
+    Delete one direct child of a results root only after it is old enough.
+
+    This safety check prevents the cleanup timer from deleting the results
+    root itself or any unrelated directory.
+    """
+    directory = Path(directory).resolve()
+    root = Path(root).resolve()
+
+    if directory.parent != root:
+        raise RuntimeError(
+            f"Unsafe result cleanup target refused: {directory}"
+        )
+
+    if not directory.is_dir():
+        return True
+
+    age_seconds = time.time() - _latest_result_mtime(directory)
+    if age_seconds < retention_seconds:
+        return False
+
+    shutil.rmtree(directory)
+    return True
+
+
+def _schedule_result_package_cleanup(runtime_directory, persistent_directory):
+    """
+    Expire only this completed result package after the retention window.
+
+    Meteorology and the HYSPLIT installation are never touched here.
+    If the same result package is updated again before the timer fires,
+    its modification time protects the newer files and another check is
+    scheduled for the remaining retention period.
+    """
+    runtime_directory = Path(runtime_directory).resolve()
+    persistent_directory = Path(persistent_directory).resolve()
+
+    def cleanup_when_expired():
+        remaining_delays = []
+
+        for directory, root in (
+            (runtime_directory, RUNTIME_ROOT / "results"),
+            (persistent_directory, PERSISTENT_RESULTS_ROOT),
+        ):
+            try:
+                deleted = _delete_result_package_if_expired(
+                    directory=directory,
+                    root=root,
+                    retention_seconds=RESULT_RETENTION_SECONDS,
+                )
+
+                if not deleted and directory.is_dir():
+                    age_seconds = time.time() - _latest_result_mtime(directory)
+                    remaining_delays.append(
+                        max(60.0, RESULT_RETENTION_SECONDS - age_seconds)
+                    )
+            except Exception:
+                # Cleanup must never interfere with trajectory execution.
+                continue
+
+        if remaining_delays:
+            retry_timer = threading.Timer(
+                max(remaining_delays),
+                cleanup_when_expired,
+            )
+            retry_timer.daemon = True
+            retry_timer.start()
+
+    cleanup_timer = threading.Timer(
+        RESULT_RETENTION_SECONDS,
+        cleanup_when_expired,
+    )
+    cleanup_timer.daemon = True
+    cleanup_timer.start()
 
 
 def prune_gdas1_cache(
@@ -2635,6 +2739,13 @@ def HysplitCalculationCard(configuration):
             map_selected_arrivals.set(arrival_options)
             map_selected_heights.set(height_options)
             hysplit_run_summary.set(summary)
+
+            # Keep the working meteorology cache unchanged. Only completed
+            # trajectory result packages are scheduled for expiration.
+            _schedule_result_package_cleanup(
+                runtime_directory=saved_results["output_directory"],
+                persistent_directory=persistent_results["directory"],
+            )
 
             hysplit_run_message.set(
                 f'HYSPLIT completed successfully: '
