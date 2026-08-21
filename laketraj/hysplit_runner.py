@@ -729,63 +729,6 @@ def save_batch_results(
         "number_of_points": len(trajectories),
     }
 
-
-def cleanup_batch_run_directories(
-    batch_result,
-    run_root=DEFAULT_RUN_DIRECTORY,
-):
-    """
-    Delete only HYSPLIT working directories created for one completed batch.
-
-    Saved CSV/JSON/GIS result packages and meteorology caches are not touched.
-    """
-    if not isinstance(batch_result, dict):
-        raise TypeError(
-            "batch_result must be the dict returned by run_trajectory_batch()."
-        )
-
-    run_root = Path(run_root).resolve()
-    deleted = []
-    missing = []
-    freed_bytes = 0
-
-    seen = set()
-    for result in batch_result.get("run_results", []):
-        run_directory = result.get("run_directory")
-        if not run_directory:
-            continue
-
-        path = Path(run_directory).resolve()
-        if path in seen:
-            continue
-        seen.add(path)
-
-        if path.parent != run_root:
-            raise RuntimeError(
-                f"Unsafe HYSPLIT run cleanup target refused: {path}"
-            )
-
-        if not path.exists():
-            missing.append(str(path))
-            continue
-
-        size_bytes = sum(
-            item.stat().st_size
-            for item in path.rglob("*")
-            if item.is_file()
-        )
-        shutil.rmtree(path)
-        freed_bytes += size_bytes
-        deleted.append(str(path))
-
-    return {
-        "deleted_directories": deleted,
-        "missing_directories": missing,
-        "deleted_count": len(deleted),
-        "freed_bytes": freed_bytes,
-    }
-
-
 class HysplitEnvironmentError(RuntimeError):
     """Raised when HYSPLIT cannot safely start."""
 
