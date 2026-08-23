@@ -2509,7 +2509,7 @@ The backward-trajectory period requires meteorological data from:
 **{item["filename"]}**
 
 - Status: {status_text}
-- [Open NOAA archive file]({item["url"]})
+- <a href="{item["url"]}" target="_blank" rel="noopener noreferrer" title="Open the NOAA archive file in a new tab">Open NOAA archive file</a>
 """
             )
 
