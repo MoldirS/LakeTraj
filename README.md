@@ -234,6 +234,14 @@ workflows. Meteorological data availability, network performance, and
 HYSPLIT execution time depend on the selected dates, trajectory duration,
 meteorological dataset, and deployment resources.
 
+**NOAA service dependency:** LakeTraj relies on NOAA-hosted meteorological
+archives for GDAS1 and GFS 0.25° data. If the NOAA archive is temporarily
+unavailable, slow, or a requested file cannot be accessed, LakeTraj may be
+unable to download the required meteorological data. In that case,
+HYSPLIT trajectories cannot be calculated until the required files become
+available. Previously downloaded meteorological files that are still in
+the rolling cache can continue to be reused.
+
 GFS 0.25° files are substantially larger than GDAS1 files, so storage and
 download requirements should be considered before running long-duration
 GFS trajectories.
