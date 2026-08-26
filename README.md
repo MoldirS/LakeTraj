@@ -155,6 +155,14 @@ Requirements:
 - the LakeCCI GeoPackage;
 - a separately obtained HYSPLIT installation.
 
+### Environment setup
+
+Before running the container for the first time, set up your local environment file:
+
+1. Copy the template environment file to create your local `.env`:
+   ```bash
+   cp runtime/.env.example runtime/.env
+
 A typical local HYSPLIT installation can be exposed to Docker through the
 `HYSPLIT_HOST_DIR` environment variable.
 
