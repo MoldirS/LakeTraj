@@ -1,11 +1,37 @@
 import html
 import base64
+import os
 from pathlib import Path
 import ipyleaflet
 import pandas as pd
 import solara
 from ipywidgets import HTML, Layout
 from shapely.geometry import Point, shape
+
+# CARTO now requires an API key on every basemap tile request (see
+# https://carto.com/basemaps/apikey). Reading it from an environment
+# variable keeps it out of source control instead of hardcoded here -
+# note that the key still travels to the browser inside the tile URL,
+# so it isn't hidden from end users, only from the repo/source code.
+CARTO_API_KEY = os.environ.get("CARTO_API_KEY", "")
+
+
+def _carto_tile_layer():
+    """Build the shared CARTO Positron basemap layer used on every map."""
+    url = "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+    if CARTO_API_KEY:
+        url += f"?key={CARTO_API_KEY}"
+
+    return ipyleaflet.TileLayer.element(
+        url=url,
+        attribution=(
+            '&copy; <a href="https://www.openstreetmap.org/copyright">'
+            "OpenStreetMap contributors</a> "
+            '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+        ),
+        name="CARTO Positron",
+        max_zoom=20,
+    )
 
 
 def _display_geometry(geometry_geojson, latitude, longitude):
@@ -107,19 +133,7 @@ def trajectory_filter_options(trajectory_csv_path):
 @solara.component
 def EmptyReceptorMapElement():
     """Show an empty Europe-centred map before a receptor is selected."""
-    tile_layer = ipyleaflet.TileLayer.element(
-        url=(
-            "https://a.basemaps.cartocdn.com/"
-            "light_all/{z}/{x}/{y}.png"
-        ),
-        attribution=(
-            '&copy; <a href="https://www.openstreetmap.org/copyright">'
-            "OpenStreetMap contributors</a> "
-            '&copy; <a href="https://carto.com/attributions">CARTO</a>'
-        ),
-        name="CARTO Positron",
-        max_zoom=20,
-    )
+    tile_layer = _carto_tile_layer()
 
     ipyleaflet.Map.element(
         center=(50.0, 10.0),
@@ -144,19 +158,7 @@ def ManualReceptorMapElement(
     latitude = float(latitude)
     longitude = float(longitude)
 
-    tile_layer = ipyleaflet.TileLayer.element(
-        url=(
-            "https://a.basemaps.cartocdn.com/"
-            "light_all/{z}/{x}/{y}.png"
-        ),
-        attribution=(
-            '&copy; <a href="https://www.openstreetmap.org/copyright">'
-            "OpenStreetMap contributors</a> "
-            '&copy; <a href="https://carto.com/attributions">CARTO</a>'
-        ),
-        name="CARTO Positron",
-        max_zoom=20,
-    )
+    tile_layer = _carto_tile_layer()
 
     coordinate_popup = HTML(
         value=(
@@ -196,19 +198,7 @@ def LakeSelectionMapElement(
     on_lake_click=None,
 ):
     """Map used to query and confirm one LakeCCI receptor candidate."""
-    tile_layer = ipyleaflet.TileLayer.element(
-        url=(
-            "https://a.basemaps.cartocdn.com/"
-            "light_all/{z}/{x}/{y}.png"
-        ),
-        attribution=(
-            '&copy; <a href="https://www.openstreetmap.org/copyright">'
-            "OpenStreetMap contributors</a> "
-            '&copy; <a href="https://carto.com/attributions">CARTO</a>'
-        ),
-        name="CARTO Positron",
-        max_zoom=20,
-    )
+    tile_layer = _carto_tile_layer()
     layers = [tile_layer]
     centre = tuple(float(value) for value in center)
     zoom = int(zoom)
@@ -393,19 +383,7 @@ def ReceptorMapElement(
         else:
             zoom = 2
 
-    tile_layer = ipyleaflet.TileLayer.element(
-        url=(
-            "https://a.basemaps.cartocdn.com/"
-            "light_all/{z}/{x}/{y}.png"
-        ),
-        attribution=(
-            '&copy; <a href="https://www.openstreetmap.org/copyright">'
-            "OpenStreetMap contributors</a> "
-            '&copy; <a href="https://carto.com/attributions">CARTO</a>'
-        ),
-        name="CARTO Positron",
-        max_zoom=20,
-    )
+    tile_layer = _carto_tile_layer()
 
     # Keep the permanent map layers in a stable order. Trajectory layers
     # are collected separately and appended only after the lake and
@@ -748,4 +726,3 @@ def ReceptorMapElement(
             height="650px",
         ),
     )
-

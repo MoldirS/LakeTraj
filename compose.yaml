@@ -13,6 +13,9 @@ services:
       LAKETRAJ_DATA_DIR: /app/data
       LAKETRAJ_RUNTIME_DIR: /var/data/runtime
       LAKETRAJ_RESULTS_DIR: /var/data/results
+    
+    env_file:
+      - .env
 
     volumes:
       - ./runtime:/var/data/runtime
